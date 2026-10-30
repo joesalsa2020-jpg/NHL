@@ -5,7 +5,7 @@ import json
 import threading
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor
-from flask import Flask, render_template_string
+from flask import Flask, render_template_string, redirect, url_for, request
 
 # ==========================================
 # ⚙️ CONFIGURACIÓN
@@ -28,8 +28,8 @@ STATS_INICIALES = {
 }
 
 STATS_6V5 = {}
-HISTORIAL_SENALES = [] # Aquí guardaremos las alertas para la web
-ESTADO_RADAR = "ACTIVO"
+HISTORIAL_SENALES = [] 
+RADAR_ACTIVO = True # <--- NUEVA VARIABLE DE ESTADO
 
 def cargar_json():
     global STATS_6V5
@@ -57,7 +57,17 @@ HTML_TEMPLATE = """
         .container { max-width: 800px; margin: 0 auto; }
         .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
         .header h1 { margin: 0; font-size: 24px; display: flex; align-items: center; gap: 10px; }
-        .status-badge { background-color: #10b981; color: white; padding: 5px 15px; border-radius: 20px; font-size: 14px; font-weight: bold; }
+        .controls { display: flex; gap: 15px; align-items: center; }
+        
+        .status-badge { background-color: {{ '#10b981' if estado == 'ACTIVO' else '#ef4444' }}; color: white; padding: 5px 15px; border-radius: 20px; font-size: 14px; font-weight: bold; }
+        
+        /* Estilos del Botón */
+        .btn { padding: 8px 20px; border: none; border-radius: 8px; cursor: pointer; font-weight: bold; font-size: 14px; transition: 0.3s; color: white; }
+        .btn-pause { background-color: #ef4444; }
+        .btn-pause:hover { background-color: #dc2626; }
+        .btn-resume { background-color: #10b981; }
+        .btn-resume:hover { background-color: #059669; }
+
         .stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; margin-bottom: 30px; background: white; padding: 20px; border-radius: 12px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); }
         .stat-item { text-align: center; }
         .stat-label { font-size: 12px; color: #6b7280; text-transform: uppercase; letter-spacing: 1px; }
@@ -71,13 +81,24 @@ HTML_TEMPLATE = """
         .signal-detail { font-size: 14px; color: #4b5563; margin-bottom: 5px; }
         .signal-highlight { font-weight: bold; color: #111827; }
     </style>
-    <meta http-equiv="refresh" content="10"> <!-- Recarga la página cada 10 segundos -->
+    {% if estado == 'ACTIVO' %}
+    <meta http-equiv="refresh" content="10">
+    {% endif %}
 </head>
 <body>
     <div class="container">
         <div class="header">
             <h1>🏒 Radar NHL</h1>
-            <div class="status-badge">{{ estado }}</div>
+            <div class="controls">
+                <div class="status-badge">{{ estado }}</div>
+                <form action="/toggle" method="POST" style="margin:0;">
+                    {% if estado == 'ACTIVO' %}
+                        <button type="submit" class="btn btn-pause">⏸ Pausar</button>
+                    {% else %}
+                        <button type="submit" class="btn btn-resume">▶ Reanudar</button>
+                    {% endif %}
+                </form>
+            </div>
         </div>
         
         <div class="stats-grid">
@@ -137,12 +158,20 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    # Calculamos la hora del último escaneo para mostrarla en la web
-    ultimo_scan = datetime.now().strftime('%H:%M:%S')
+    global RADAR_ACTIVO
+    estado_str = "ACTIVO" if RADAR_ACTIVO else "PAUSADO"
+    ultimo_scan = datetime.now().strftime('%H:%M:%S') if RADAR_ACTIVO else "Pausado"
+    
     return render_template_string(HTML_TEMPLATE, 
-                                  historial=HISTORIAL_SENALES[::-1][:10], # Muestra las últimas 10, la más nueva primero
-                                  estado=ESTADO_RADAR,
+                                  historial=HISTORIAL_SENALES[::-1][:10],
+                                  estado=estado_str,
                                   ultimo_scan=ultimo_scan)
+
+@app.route('/toggle', methods=['POST'])
+def toggle():
+    global RADAR_ACTIVO
+    RADAR_ACTIVO = not RADAR_ACTIVO # Invierte el estado (Si está True, lo pone False)
+    return redirect(url_for('home')) # Recarga la página
 
 # ==========================================
 # 🧠 LÓGICA DEL RADAR
@@ -203,7 +232,6 @@ def procesar_partido(juego):
                            f"🥅 Si hay gol, *{pct_gc:.1f}%* es en red vacía (anota {home_team}).")
                     enviar_telegram(msg)
                     
-                    # GUARDAR EN EL HISTORIAL WEB
                     HISTORIAL_SENALES.append({
                         'tipo': 'Portero Quitado', 'equipo': away_team, 'partido': f"{away_team} vs {home_team}",
                         'periodo': period, 'tiempo': time_str, 'pct_favor': round(pct_gf, 1), 'pct_contra': round(pct_gc, 1)
@@ -222,7 +250,6 @@ def procesar_partido(juego):
                            f"🥅 Si hay gol, *{pct_gc:.1f}%* es en red vacía (anota {away_team}).")
                     enviar_telegram(msg)
                     
-                    # GUARDAR EN EL HISTORIAL WEB
                     HISTORIAL_SENALES.append({
                         'tipo': 'Portero Quitado', 'equipo': home_team, 'partido': f"{away_team} vs {home_team}",
                         'periodo': period, 'tiempo': time_str, 'pct_favor': round(pct_gf, 1), 'pct_contra': round(pct_gc, 1)
@@ -245,7 +272,6 @@ def procesar_partido(juego):
                            f"⏱️ P{play['periodDescriptor']['number']} - {time_str} | 🆚 {away_team} vs {home_team}")
                     enviar_telegram(msg)
                     
-                    # GUARDAR EN EL HISTORIAL WEB
                     HISTORIAL_SENALES.append({
                         'tipo': 'Gol Red Vacía', 'equipo': equipo_gol, 'partido': f"{away_team} vs {home_team}",
                         'periodo': play['periodDescriptor']['number'], 'tiempo': time_str
@@ -253,7 +279,13 @@ def procesar_partido(juego):
                 eventos_alertados.add(play_id)
 
 def radar_en_vivo():
+    global RADAR_ACTIVO
     while True:
+        # Si el radar está pausado desde la web, no hace nada
+        if not RADAR_ACTIVO:
+            time.sleep(2)
+            continue
+            
         try:
             res = requests.get("https://api-web.nhle.com/v1/scoreboard/now", timeout=3).json()
             partidos = [j for d in res.get('gamesByDate', []) for j in d.get('games', []) if j.get('gameState') in ['LIVE', 'CRIT']]
@@ -267,6 +299,7 @@ def radar_en_vivo():
 # ⏰ ACTUALIZADOR DIARIO
 # ==========================================
 def actualizador_diario():
+    # (Este se queda igual, siempre corre para mantener la base de datos actualizada)
     ultimo_dia = ""
     while True:
         hoy = datetime.now().strftime("%Y-%m-%d")
