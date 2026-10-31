@@ -13,7 +13,6 @@ from flask import Flask, render_template_string, redirect, url_for
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "TU_TOKEN_AQUI")
 CHAT_ID = os.environ.get("CHAT_ID", "TU_CHAT_ID_AQUI")
 
-# Datos iniciales basados en la nueva tabla de efectividad (Pulls, Éxitos, Desastres, Sin Gol)
 STATS_INICIALES = {
     "ANA": {"pulls": 2, "exitos": 0, "desastres": 0, "sin_gol": 2}, "BOS": {"pulls": 3, "exitos": 1, "desastres": 1, "sin_gol": 1},
     "BUF": {"pulls": 3, "exitos": 0, "desastres": 1, "sin_gol": 2}, "CAR": {"pulls": 2, "exitos": 0, "desastres": 0, "sin_gol": 2},
@@ -164,7 +163,11 @@ def procesar_partido(juego):
         
         if latest_sit:
             period = latest_play['periodDescriptor']['number']
-            if period < 3: return 
+            time_str = latest_play['timeInPeriod']
+            
+            # 🛑 FILTRO DE SEGURIDAD: Ignorar Periodo 5 (Shootout) y reloj en 00:00
+            if period < 3 or period >= 5 or time_str == '00:00': 
+                return 
                 
             if game_id not in game_states: game_states[game_id] = latest_sit
             else:
@@ -172,9 +175,7 @@ def procesar_partido(juego):
                 if latest_sit != prev_sit:
                     p_away_g, c_away_g = prev_sit[0], latest_sit[0]
                     p_home_g, c_home_g = prev_sit[3], latest_sit[3]
-                    time_str = latest_play['timeInPeriod']
                     
-                    # Función auxiliar para calcular porcentajes
                     def get_pcts(equipo):
                         st = STATS_6V5.get(equipo, {'pulls': 1, 'exitos': 0, 'desastres': 0})
                         p = max(1, st['pulls'])
@@ -205,7 +206,15 @@ def procesar_partido(juego):
         for play in plays[-5:]:
             play_id = play['eventId']
             if play_id in eventos_alertados: continue
-            if play.get('typeDescKey') == 'goal' and play['periodDescriptor']['number'] >= 3:
+            
+            period_gol = play['periodDescriptor']['number']
+            time_gol = play['timeInPeriod']
+            
+            # 🛑 FILTRO DE SEGURIDAD PARA GOLES
+            if period_gol < 3 or period_gol >= 5 or time_gol == '00:00':
+                continue
+                
+            if play.get('typeDescKey') == 'goal':
                 sit = play.get('situationCode')
                 if sit:
                     away_g, home_g = sit[0], sit[3]
@@ -213,9 +222,9 @@ def procesar_partido(juego):
                         anotador_id = play['details'].get('eventOwnerTeamId')
                         equipo_gol = away_team if anotador_id == juego['awayTeam']['id'] else home_team
                         msg = (f"⚽ *¡GOL EN RED VACÍA!*\n🏒 Anotador: *{equipo_gol}*\n"
-                               f"⏱️ P{play['periodDescriptor']['number']} - {play['timeInPeriod']} | 🆚 {away_team} vs {home_team}")
+                               f"⏱️ P{period_gol} - {time_gol} | 🆚 {away_team} vs {home_team}")
                         enviar_telegram(msg)
-                        HISTORIAL_SENALES.append({'tipo': 'Gol Red Vacía', 'equipo': equipo_gol, 'partido': f"{away_team} vs {home_team}", 'periodo': play['periodDescriptor']['number'], 'tiempo': play['timeInPeriod']})
+                        HISTORIAL_SENALES.append({'tipo': 'Gol Red Vacía', 'equipo': equipo_gol, 'partido': f"{away_team} vs {home_team}", 'periodo': period_gol, 'tiempo': time_gol})
                     eventos_alertados.add(play_id)
     except: pass
 
@@ -266,7 +275,12 @@ def actualizador_diario():
                                     elif p_data['gf'] == 0 and p_data['gc'] == 0: STATS_6V5[eq]['sin_gol'] += 1
 
                             for play in pbp['plays']:
-                                if play.get('periodDescriptor', {}).get('number', 1) < 3: continue
+                                period = play.get('periodDescriptor', {}).get('number', 1)
+                                time_play = play.get('timeInPeriod', '')
+                                
+                                # 🛑 FILTRO DE SEGURIDAD EN EL ACTUALIZADOR
+                                if period < 3 or period >= 5 or time_play == '00:00': continue
+                                
                                 sit = play.get('situationCode')
                                 if not sit: continue
                                 
