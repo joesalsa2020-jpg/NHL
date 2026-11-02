@@ -6,49 +6,87 @@ import threading
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor
 from flask import Flask, render_template_string, redirect, url_for
+import libsql
 
 # ==========================================
-# ⚙️ CONFIGURACIÓN
+# ⚙️ CONFIGURACIÓN (VARIABLES DE ENTORNO)
 # ==========================================
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "TU_TOKEN_AQUI")
 CHAT_ID = os.environ.get("CHAT_ID", "TU_CHAT_ID_AQUI")
+TURSO_URL = os.environ.get("TURSO_DATABASE_URL")
+TURSO_TOKEN = os.environ.get("TURSO_AUTH_TOKEN")
 
+# Datos iniciales (del backtesting) por si la tabla está vacía
 STATS_INICIALES = {
-    "ANA": {"pulls": 2, "exitos": 0, "desastres": 0, "sin_gol": 2}, "BOS": {"pulls": 3, "exitos": 1, "desastres": 1, "sin_gol": 1},
-    "BUF": {"pulls": 3, "exitos": 0, "desastres": 1, "sin_gol": 2}, "CAR": {"pulls": 2, "exitos": 0, "desastres": 0, "sin_gol": 2},
-    "CBJ": {"pulls": 0, "exitos": 0, "desastres": 0, "sin_gol": 0}, "CGY": {"pulls": 1, "exitos": 0, "desastres": 1, "sin_gol": 0},
-    "CHI": {"pulls": 2, "exitos": 0, "desastres": 1, "sin_gol": 1}, "COL": {"pulls": 0, "exitos": 0, "desastres": 0, "sin_gol": 0},
-    "DAL": {"pulls": 4, "exitos": 0, "desastres": 2, "sin_gol": 2}, "DET": {"pulls": 3, "exitos": 0, "desastres": 1, "sin_gol": 2},
-    "EDM": {"pulls": 2, "exitos": 1, "desastres": 0, "sin_gol": 1}, "FLA": {"pulls": 4, "exitos": 1, "desastres": 0, "sin_gol": 3},
-    "LAK": {"pulls": 3, "exitos": 1, "desastres": 0, "sin_gol": 2}, "MIN": {"pulls": 1, "exitos": 0, "desastres": 0, "sin_gol": 1},
-    "MTL": {"pulls": 8, "exitos": 3, "desastres": 1, "sin_gol": 4}, "NJD": {"pulls": 2, "exitos": 0, "desastres": 0, "sin_gol": 2},
-    "NSH": {"pulls": 3, "exitos": 0, "desastres": 0, "sin_gol": 3}, "NYI": {"pulls": 3, "exitos": 0, "desastres": 2, "sin_gol": 1},
-    "NYR": {"pulls": 1, "exitos": 0, "desastres": 1, "sin_gol": 0}, "OTT": {"pulls": 4, "exitos": 0, "desastres": 1, "sin_gol": 3},
-    "PHI": {"pulls": 5, "exitos": 0, "desastres": 1, "sin_gol": 4}, "PIT": {"pulls": 3, "exitos": 0, "desastres": 0, "sin_gol": 3},
-    "SEA": {"pulls": 1, "exitos": 0, "desastres": 1, "sin_gol": 0}, "SJS": {"pulls": 3, "exitos": 0, "desastres": 0, "sin_gol": 3},
-    "STL": {"pulls": 1, "exitos": 0, "desastres": 0, "sin_gol": 0}, "TBL": {"pulls": 3, "exitos": 0, "desastres": 1, "sin_gol": 2},
-    "TOR": {"pulls": 6, "exitos": 0, "desastres": 0, "sin_gol": 6}, "UTA": {"pulls": 2, "exitos": 0, "desastres": 1, "sin_gol": 1},
-    "VAN": {"pulls": 4, "exitos": 0, "desastres": 0, "sin_gol": 4}, "VGK": {"pulls": 1, "exitos": 0, "desastres": 0, "sin_gol": 1},
-    "WPG": {"pulls": 1, "exitos": 0, "desastres": 0, "sin_gol": 1}, "WSH": {"pulls": 4, "exitos": 0, "desastres": 1, "sin_gol": 3}
+    "BOS": {"pulls": 2, "exitos": 1, "desastres": 1, "sin_gol": 0}, "BUF": {"pulls": 2, "exitos": 0, "desastres": 1, "sin_gol": 1},
+    "CGY": {"pulls": 1, "exitos": 0, "desastres": 1, "sin_gol": 0}, "CHI": {"pulls": 3, "exitos": 0, "desastres": 2, "sin_gol": 1},
+    "COL": {"pulls": 1, "exitos": 0, "desastres": 0, "sin_gol": 1}, "DAL": {"pulls": 3, "exitos": 0, "desastres": 1, "sin_gol": 2},
+    "DET": {"pulls": 3, "exitos": 0, "desastres": 1, "sin_gol": 2}, "EDM": {"pulls": 1, "exitos": 1, "desastres": 0, "sin_gol": 0},
+    "FLA": {"pulls": 4, "exitos": 1, "desastres": 1, "sin_gol": 2}, "LAK": {"pulls": 2, "exitos": 1, "desastres": 0, "sin_gol": 1},
+    "MIN": {"pulls": 1, "exitos": 0, "desastres": 0, "sin_gol": 1}, "MTL": {"pulls": 8, "exitos": 3, "desastres": 3, "sin_gol": 2},
+    "NJD": {"pulls": 1, "exitos": 0, "desastres": 0, "sin_gol": 1}, "NSH": {"pulls": 2, "exitos": 0, "desastres": 0, "sin_gol": 2},
+    "NYI": {"pulls": 3, "exitos": 0, "desastres": 2, "sin_gol": 1}, "NYR": {"pulls": 1, "exitos": 0, "desastres": 1, "sin_gol": 0},
+    "OTT": {"pulls": 4, "exitos": 0, "desastres": 1, "sin_gol": 3}, "PHI": {"pulls": 3, "exitos": 0, "desastres": 1, "sin_gol": 2},
+    "PIT": {"pulls": 2, "exitos": 0, "desastres": 0, "sin_gol": 2}, "SEA": {"pulls": 1, "exitos": 0, "desastres": 1, "sin_gol": 0},
+    "SJS": {"pulls": 2, "exitos": 0, "desastres": 0, "sin_gol": 2}, "STL": {"pulls": 1, "exitos": 0, "desastres": 0, "sin_gol": 0},
+    "TOR": {"pulls": 4, "exitos": 0, "desastres": 0, "sin_gol": 4}, "UTA": {"pulls": 2, "exitos": 0, "desastres": 1, "sin_gol": 1},
+    "VAN": {"pulls": 2, "exitos": 0, "desastres": 0, "sin_gol": 2}, "VGK": {"pulls": 1, "exitos": 0, "desastres": 0, "sin_gol": 1},
+    "WSH": {"pulls": 3, "exitos": 0, "desastres": 1, "sin_gol": 2}
 }
+for team in ["ANA", "CAR", "CBJ", "TBL"]:
+    STATS_INICIALES.setdefault(team, {"pulls": 0, "exitos": 0, "desastres": 0, "sin_gol": 0})
 
 STATS_6V5 = {}
-HISTORIAL_SENALES = [] 
+HISTORIAL_SENALES = []
 RADAR_ACTIVO = True
 
-def cargar_json():
+# ==========================================
+# 🗄️ CONEXIÓN A TURSO
+# ==========================================
+def get_db_conn():
+    if not TURSO_URL or not TURSO_TOKEN:
+        print("⚠️ Faltan credenciales de Turso. Usando memoria local.")
+        return None
+    return libsql.connect(TURSO_URL, auth_token=TURSO_TOKEN)
+
+def init_db():
     global STATS_6V5
-    if not os.path.exists('stats_6v5.json'):
-        with open('stats_6v5.json', 'w') as archivo:
-            json.dump(STATS_INICIALES, archivo, indent=4)
-    try:
-        with open('stats_6v5.json', 'r') as archivo:
-            STATS_6V5 = json.load(archivo)
-    except:
+    conn = get_db_conn()
+    if not conn:
         STATS_6V5 = STATS_INICIALES
+        return
+
+    # Crear tabla si no existe
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS nhl_stats (
+            team TEXT PRIMARY KEY,
+            pulls INTEGER DEFAULT 0,
+            exitos INTEGER DEFAULT 0,
+            desastres INTEGER DEFAULT 0,
+            sin_gol INTEGER DEFAULT 0
+        )
+    """)
+    
+    # Verificar si está vacía
+    cursor = conn.execute("SELECT COUNT(*) FROM nhl_stats")
+    if cursor.fetchone()[0] == 0:
+        print("📥 Poblando base de datos con datos iniciales...")
+        for team, data in STATS_INICIALES.items():
+            conn.execute(
+                "INSERT OR IGNORE INTO nhl_stats (team, pulls, exitos, desastres, sin_gol) VALUES (?, ?, ?, ?, ?)",
+                [team, data['pulls'], data['exitos'], data['desastres'], data['sin_gol']]
+            )
+        conn.commit()
+
+    # Cargar en memoria para acceso rápido
+    cursor = conn.execute("SELECT team, pulls, exitos, desastres, sin_gol FROM nhl_stats")
+    for row in cursor.fetchall():
+        STATS_6V5[row[0]] = {"pulls": row[1], "exitos": row[2], "desastres": row[3], "sin_gol": row[4]}
+    
+    print("✅ Estadísticas cargadas desde Turso.")
 
 # ==========================================
-# 🎨 DISEÑO WEB (HTML)
+# 🎨 DISEÑO WEB (HTML - Sin cambios)
 # ==========================================
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -138,7 +176,7 @@ def toggle():
     return redirect(url_for('home'))
 
 # ==========================================
-# 🧠 RADAR EN VIVO
+# 🧠 RADAR EN VIVO (CON FILTRO DE TIEMPO)
 # ==========================================
 def enviar_telegram(mensaje):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
@@ -146,8 +184,8 @@ def enviar_telegram(mensaje):
     try: requests.post(url, json=payload, timeout=3)
     except: pass
 
-eventos_alertados = set() 
-game_states = {} 
+eventos_alertados = set()
+game_states = {}
 
 def procesar_partido(juego):
     game_id = juego['id']
@@ -165,16 +203,25 @@ def procesar_partido(juego):
             period = latest_play['periodDescriptor']['number']
             time_str = latest_play['timeInPeriod']
             
-            # 🛑 FILTRO DE SEGURIDAD: Ignorar Periodo 5 (Shootout) y reloj en 00:00
-            if period < 3 or period >= 5 or time_str == '00:00': 
-                return 
-                
+            # 🛑 FILTRO DE SEGURIDAD: P3, sin Shootout, sin reloj en 00:00
+            if period < 3 or period >= 5 or time_str == '00:00': return 
+            
+            # 🛑 NUEVO FILTRO: Solo a partir del minuto 18:00 (1080 segundos)
+            try:
+                mins, secs = map(int, time_str.split(':'))
+                total_seconds = (mins * 60) + secs
+                if total_seconds < 1080: return
+            except: return
+
             if game_id not in game_states: game_states[game_id] = latest_sit
             else:
                 prev_sit = game_states[game_id]
                 if latest_sit != prev_sit:
                     p_away_g, c_away_g = prev_sit[0], latest_sit[0]
                     p_home_g, c_home_g = prev_sit[3], latest_sit[3]
+                    
+                    home_score = juego['homeTeam'].get('score', 0)
+                    away_score = juego['awayTeam'].get('score', 0)
                     
                     def get_pcts(equipo):
                         st = STATS_6V5.get(equipo, {'pulls': 1, 'exitos': 0, 'desastres': 0})
@@ -184,7 +231,7 @@ def procesar_partido(juego):
                     if p_away_g == '1' and c_away_g == '0':
                         pct_e, pct_d = get_pcts(away_team)
                         msg = (f"🚨 *¡PORTERO QUITADO!*\n🏒 *{away_team}* ataca con 6 jugadores.\n"
-                               f"⏱️ P{period} - {time_str} | 🆚 {away_team} vs {home_team}\n\n"
+                               f"⏱️ P{period} - {time_str} | 🆚 {away_team} {away_score} - {home_score} {home_team}\n\n"
                                f"📊 *Historial ({away_team} arriesgando):*\n"
                                f"✅ Anotan: *{pct_e:.1f}%* de las veces\n"
                                f"❌ Reciben: *{pct_d:.1f}%* de las veces")
@@ -194,7 +241,7 @@ def procesar_partido(juego):
                     elif p_home_g == '1' and c_home_g == '0':
                         pct_e, pct_d = get_pcts(home_team)
                         msg = (f"🚨 *¡PORTERO QUITADO!*\n🏒 *{home_team}* ataca con 6 jugadores.\n"
-                               f"⏱️ P{period} - {time_str} | 🆚 {away_team} vs {home_team}\n\n"
+                               f"⏱️ P{period} - {time_str} | 🆚 {away_team} {away_score} - {home_score} {home_team}\n\n"
                                f"📊 *Historial ({home_team} arriesgando):*\n"
                                f"✅ Anotan: *{pct_e:.1f}%* de las veces\n"
                                f"❌ Reciben: *{pct_d:.1f}%* de las veces")
@@ -211,8 +258,13 @@ def procesar_partido(juego):
             time_gol = play['timeInPeriod']
             
             # 🛑 FILTRO DE SEGURIDAD PARA GOLES
-            if period_gol < 3 or period_gol >= 5 or time_gol == '00:00':
-                continue
+            if period_gol < 3 or period_gol >= 5 or time_gol == '00:00': continue
+            
+            try:
+                mins, secs = map(int, time_gol.split(':'))
+                total_seconds = (mins * 60) + secs
+                if total_seconds < 1080: continue
+            except: continue
                 
             if play.get('typeDescKey') == 'goal':
                 sit = play.get('situationCode')
@@ -226,7 +278,7 @@ def procesar_partido(juego):
                         enviar_telegram(msg)
                         HISTORIAL_SENALES.append({'tipo': 'Gol Red Vacía', 'equipo': equipo_gol, 'partido': f"{away_team} vs {home_team}", 'periodo': period_gol, 'tiempo': time_gol})
                     eventos_alertados.add(play_id)
-    except: pass
+    except Exception as e: pass
 
 def radar_en_vivo():
     while True:
@@ -243,7 +295,7 @@ def radar_en_vivo():
         time.sleep(3)
 
 # ==========================================
-# ⏰ ACTUALIZADOR DIARIO (Misma lógica de Pulls)
+# ⏰ ACTUALIZADOR DIARIO (CON TURSO Y FILTRO)
 # ==========================================
 def actualizador_diario():
     ultimo_dia = ""
@@ -262,9 +314,12 @@ def actualizador_diario():
                             
                             ht, at = pbp['homeTeam']['abbrev'], pbp['awayTeam']['abbrev']
                             hid, aid = pbp['homeTeam']['id'], pbp['awayTeam']['id']
+                            
+                            # Asegurar que los equipos existen en el diccionario local
                             for eq in [ht, at]:
                                 if eq not in STATS_6V5: STATS_6V5[eq] = {'pulls': 0, 'exitos': 0, 'desastres': 0, 'sin_gol': 0}
                             
+                            home_score, away_score = 0, 0
                             active_ht_pull, active_at_pull = None, None
                             
                             def cerrar(eq, p_data):
@@ -278,8 +333,17 @@ def actualizador_diario():
                                 period = play.get('periodDescriptor', {}).get('number', 1)
                                 time_play = play.get('timeInPeriod', '')
                                 
-                                # 🛑 FILTRO DE SEGURIDAD EN EL ACTUALIZADOR
-                                if period < 3 or period >= 5 or time_play == '00:00': continue
+                                # FILTRO: Solo P3, sin 00:00, a partir del minuto 18
+                                if period != 3 or time_play == '00:00': continue
+                                try:
+                                    mins, secs = map(int, time_play.split(':'))
+                                    if (mins * 60 + secs) < 1080: continue
+                                except: continue
+
+                                if play.get('typeDescKey') == 'goal':
+                                    anotador = play['details'].get('eventOwnerTeamId')
+                                    if anotador == hid: home_score += 1
+                                    elif anotador == aid: away_score += 1
                                 
                                 sit = play.get('situationCode')
                                 if not sit: continue
@@ -292,7 +356,6 @@ def actualizador_diario():
                                 elif ag != '0' and active_at_pull is not None: cerrar(at, active_at_pull); active_at_pull = None
                                 
                                 if play.get('typeDescKey') == 'goal':
-                                    anotador = play['details'].get('eventOwnerTeamId')
                                     if active_ht_pull is not None:
                                         if anotador == hid: active_ht_pull['gf'] += 1
                                         elif anotador == aid: active_ht_pull['gc'] += 1
@@ -303,13 +366,28 @@ def actualizador_diario():
                             if active_ht_pull is not None: cerrar(ht, active_ht_pull)
                             if active_at_pull is not None: cerrar(at, active_at_pull)
 
-                with open('stats_6v5.json', 'w') as archivo: json.dump(STATS_6V5, archivo, indent=4)
+                # Guardar en Turso
+                conn = get_db_conn()
+                if conn:
+                    for eq, data in STATS_6V5.items():
+                        conn.execute("""
+                            INSERT INTO nhl_stats (team, pulls, exitos, desastres, sin_gol)
+                            VALUES (?, ?, ?, ?, ?)
+                            ON CONFLICT(team) DO UPDATE SET
+                                pulls = excluded.pulls,
+                                exitos = excluded.exitos,
+                                desastres = excluded.desastres,
+                                sin_gol = excluded.sin_gol
+                        """, [eq, data['pulls'], data['exitos'], data['desastres'], data['sin_gol']])
+                    conn.commit()
+                    print(f"✅ Base de datos Turso actualizada con partidos del {ayer}")
+                
                 ultimo_dia = hoy
-            except: pass
+            except Exception as e: print(f"Error actualizador: {e}")
         time.sleep(3600)
 
 if __name__ == "__main__":
-    cargar_json()
+    init_db()
     threading.Thread(target=radar_en_vivo, daemon=True).start()
     threading.Thread(target=actualizador_diario, daemon=True).start()
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
