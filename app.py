@@ -206,11 +206,11 @@ def procesar_partido(juego):
             # 🛑 FILTRO DE SEGURIDAD: P3, sin Shootout, sin reloj en 00:00
             if period < 3 or period >= 5 or time_str == '00:00': return 
             
-            # 🛑 NUEVO FILTRO: Solo a partir del minuto 18:00 (1080 segundos)
+            # 🛑 NUEVO FILTRO: Solo a partir del minuto 17:00 (1020 segundos)
             try:
                 mins, secs = map(int, time_str.split(':'))
                 total_seconds = (mins * 60) + secs
-                if total_seconds < 1080: return
+                if total_seconds < 1020: return
             except: return
 
             if game_id not in game_states: game_states[game_id] = latest_sit
@@ -263,7 +263,7 @@ def procesar_partido(juego):
             try:
                 mins, secs = map(int, time_gol.split(':'))
                 total_seconds = (mins * 60) + secs
-                if total_seconds < 1080: continue
+                if total_seconds < 1020: continue
             except: continue
                 
             if play.get('typeDescKey') == 'goal':
@@ -333,11 +333,11 @@ def actualizador_diario():
                                 period = play.get('periodDescriptor', {}).get('number', 1)
                                 time_play = play.get('timeInPeriod', '')
                                 
-                                # FILTRO: Solo P3, sin 00:00, a partir del minuto 18
+                                # FILTRO: Solo P3, sin 00:00, a partir del minuto 17
                                 if period != 3 or time_play == '00:00': continue
                                 try:
                                     mins, secs = map(int, time_play.split(':'))
-                                    if (mins * 60 + secs) < 1080: continue
+                                    if (mins * 60 + secs) < 1020: continue
                                 except: continue
 
                                 if play.get('typeDescKey') == 'goal':
